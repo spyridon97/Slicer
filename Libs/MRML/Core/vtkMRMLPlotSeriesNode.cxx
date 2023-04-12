@@ -233,6 +233,7 @@ const char* vtkMRMLPlotSeriesNode::GetPlotTypeAsString(int id)
     case PlotTypeBar: return "Bar";
     case PlotTypeScatter: return "Scatter";
     case PlotTypeScatterBar: return "ScatterBar";
+    case PlotTypeParallelCoordinates: return "ParallelCoordinates";
     default:
       // invalid id
       return "";

@@ -52,6 +52,7 @@ public:
     PlotTypeBar,
     PlotTypeScatter,
     PlotTypeScatterBar,
+    PlotTypeParallelCoordinates,
     PlotType_Last // must be last
     };
 
@@ -135,11 +136,12 @@ public:
   /// Get and Set Macros
   //----------------------------------------------------------------
 
-  /// Get/Set the type of the plot (line, bar, scatter, scatter bar).
+  /// Get/Set the type of the plot (line, bar, scatter, scatter bar, parallel coordinates).
   /// PlotTypeLine: line points are equally spaced along X axis, Y column defines height of each point
   /// PlotTypeBar: vertical bars equally spaced along X axis, Y column defines height of each bar
   /// PlotTypeScatter: X and Y columns define X and Y coordinates of points, connected by line
   /// PlotTypeScatterBar: X and Y columns define bar position and height
+  /// PlotTypeParallelCoordinates: X column defines the variable, Y column defines the position for each variable
   vtkSetMacro(PlotType, int);
   vtkGetMacro(PlotType, int);
 

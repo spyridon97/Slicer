@@ -52,6 +52,7 @@
 #include <vtkBrush.h>
 #include <vtkChartLegend.h>
 #include <vtkChartXY.h>
+#include <vtkChartParallelCoordinates.h>
 #include <vtkCollection.h>
 #include <vtkContextMouseEvent.h>
 #include <vtkContextScene.h>
@@ -62,6 +63,7 @@
 #include <vtkPlot.h>
 #include <vtkPlotLine.h>
 #include <vtkPlotBar.h>
+#include <vtkPlotParallelCoordinates.h>
 #include <vtkRenderer.h>
 #include <vtkRenderWindow.h>
 #include <vtkSelection.h>
@@ -92,23 +94,23 @@ void qMRMLPlotViewPrivate::init()
 {
   Q_Q(qMRMLPlotView);
 
-  if (!q->chart())
+  if (!q->abstractChart())
     {
     return;
     }
 
-  qvtkConnect(q->chart(), vtkCommand::SelectionChangedEvent, this, SLOT(emitSelection()));
-  qvtkConnect(q->chart(), vtkCommand::InteractionEvent, q, SLOT(updateMRMLChartAxisRangeFromWidget()));
+  qvtkConnect(q->abstractChart(), vtkCommand::SelectionChangedEvent, this, SLOT(emitSelection()));
+  qvtkConnect(q->abstractChart(), vtkCommand::InteractionEvent, q, SLOT(updateMRMLChartAxisRangeFromWidget()));
 
-  if (!q->chart()->GetBackgroundBrush() ||
-      !q->chart()->GetTitleProperties() ||
-      !q->chart()->GetLegend()          ||
+  if (!q->abstractChart()->GetBackgroundBrush() ||
+      !q->abstractChart()->GetTitleProperties() ||
+      !q->abstractChart()->GetLegend()          ||
       !q->scene())
     {
     return;
     }
 
-  if (!q->chart()->GetLegend()->GetLabelProperties() ||
+  if (!q->abstractChart()->GetLegend()->GetLabelProperties() ||
       !q->scene()->GetRenderer())
     {
     return;
@@ -116,14 +118,14 @@ void qMRMLPlotViewPrivate::init()
 
   vtkColor4ub color;
   color.Set(255., 253., 246., 255.);
-  q->chart()->GetBackgroundBrush()->SetColor(color);
-  q->chart()->GetTitleProperties()->SetFontFamilyToArial();
-  q->chart()->GetTitleProperties()->SetFontSize(20);
-  q->chart()->GetLegend()->GetLabelProperties()->SetFontFamilyToArial();
+  q->abstractChart()->GetBackgroundBrush()->SetColor(color);
+  q->abstractChart()->GetTitleProperties()->SetFontFamilyToArial();
+  q->abstractChart()->GetTitleProperties()->SetFontSize(20);
+  q->abstractChart()->GetLegend()->GetLabelProperties()->SetFontFamilyToArial();
   q->scene()->GetRenderer()->SetUseDepthPeeling(true);
   q->scene()->GetRenderer()->SetUseFXAA(true);
 
-  vtkAxis* axis = q->chart()->GetAxis(vtkAxis::LEFT);
+  vtkAxis* axis = q->abstractChart()->GetAxis(vtkAxis::LEFT);
   if (axis)
     {
     axis->GetTitleProperties()->SetFontFamilyToArial();
@@ -132,7 +134,7 @@ void qMRMLPlotViewPrivate::init()
     axis->GetLabelProperties()->SetFontFamilyToArial();
     axis->GetLabelProperties()->SetFontSize(12);
     }
-  axis = q->chart()->GetAxis(vtkAxis::BOTTOM);
+  axis = q->abstractChart()->GetAxis(vtkAxis::BOTTOM);
   if (axis)
     {
     axis->GetTitleProperties()->SetFontFamilyToArial();
@@ -141,7 +143,7 @@ void qMRMLPlotViewPrivate::init()
     axis->GetLabelProperties()->SetFontFamilyToArial();
     axis->GetLabelProperties()->SetFontSize(12);
     }
-  axis = q->chart()->GetAxis(vtkAxis::RIGHT);
+  axis = q->abstractChart()->GetAxis(vtkAxis::RIGHT);
   if (axis)
     {
     axis->GetTitleProperties()->SetFontFamilyToArial();
@@ -150,7 +152,7 @@ void qMRMLPlotViewPrivate::init()
     axis->GetLabelProperties()->SetFontFamilyToArial();
     axis->GetLabelProperties()->SetFontSize(12);
     }
-  axis = q->chart()->GetAxis(vtkAxis::TOP);
+  axis = q->abstractChart()->GetAxis(vtkAxis::TOP);
   if (axis)
     {
     axis->GetTitleProperties()->SetFontFamilyToArial();
@@ -303,6 +305,13 @@ vtkSmartPointer<vtkPlot> qMRMLPlotViewPrivate::updatePlotFromPlotSeriesNode(vtkM
         newPlot = vtkSmartPointer<vtkPlotBar>::New();
         }
       break;
+    case vtkMRMLPlotSeriesNode::PlotTypeParallelCoordinates:
+      if (!existingPlot || !existingPlot->IsA("vtkPlotParallelCoordinates"))
+        {
+        std::cout << "Creating new vtkPlotParallelCoordinates plot" << std::endl;
+        newPlot = vtkSmartPointer<vtkPlotParallelCoordinates>::New();
+        }
+      break;
     default:
       return nullptr;
     }
@@ -450,7 +459,7 @@ void qMRMLPlotViewPrivate::RecalculateBounds()
 {
   Q_Q(qMRMLPlotView);
 
-  if (!q->chart())
+  if (!q->abstractChart())
     {
     return;
     }
@@ -467,9 +476,11 @@ void qMRMLPlotViewPrivate::RecalculateBounds()
                               // Store whether the ranges have been initialized - follows same order
   bool initialized[] = { false, false, false, false };
   double bounds[4] = { 0.0, 0.0, 0.0, 0.0 };
-  for (int plotIndex = 0; plotIndex < q->chart()->GetNumberOfPlots(); plotIndex++)
+  vtkChart* chart = q->abstractChart();
+  vtkChartXY* chartXY = vtkChartXY::SafeDownCast(chart);
+  for (int plotIndex = 0; plotIndex < chart->GetNumberOfPlots(); plotIndex++)
     {
-    vtkPlot* plot = q->chart()->GetPlot(plotIndex);
+    vtkPlot* plot = chart->GetPlot(plotIndex);
     if (!plot->GetVisible())
       {
       continue;
@@ -480,95 +491,119 @@ void qMRMLPlotViewPrivate::RecalculateBounds()
       // skip uninitialized bounds.
       continue;
       }
-    int corner = q->chart()->GetPlotCorner(plot);
-
-    // Initialize the appropriate ranges, or push out the ranges
-    if ((corner == 0 || corner == 3)) // left
+    if (chartXY)
       {
-      if (!initialized[0])
-        {
-        y1[0] = bounds[2];
-        y1[1] = bounds[3];
-        initialized[0] = true;
+      int corner = chartXY->GetPlotCorner(plot);
+
+        // Initialize the appropriate ranges, or push out the ranges
+        if ((corner == 0 || corner == 3)) // left
+          {
+          if (!initialized[0])
+            {
+            y1[0] = bounds[2];
+            y1[1] = bounds[3];
+            initialized[0] = true;
+            }
+          else
+            {
+            if (y1[0] > bounds[2]) // min
+              {
+              y1[0] = bounds[2];
+              }
+            if (y1[1] < bounds[3]) // max
+              {
+              y1[1] = bounds[3];
+              }
+            }
+          }
+        if ((corner == 0 || corner == 1)) // bottom
+          {
+          if (!initialized[1])
+            {
+            x1[0] = bounds[0];
+            x1[1] = bounds[1];
+            initialized[1] = true;
+            }
+          else
+            {
+            if (x1[0] > bounds[0]) // min
+              {
+              x1[0] = bounds[0];
+              }
+            if (x1[1] < bounds[1]) // max
+              {
+              x1[1] = bounds[1];
+              }
+            }
+          }
+        if ((corner == 1 || corner == 2)) // right
+          {
+          if (!initialized[2])
+            {
+            y2[0] = bounds[2];
+            y2[1] = bounds[3];
+            initialized[2] = true;
+            }
+          else
+            {
+            if (y2[0] > bounds[2]) // min
+              {
+              y2[0] = bounds[2];
+              }
+            if (y2[1] < bounds[3]) // max
+              {
+              y2[1] = bounds[3];
+              }
+            }
+          }
+        if ((corner == 2 || corner == 3)) // top
+          {
+          if (!initialized[3])
+            {
+            x2[0] = bounds[0];
+            x2[1] = bounds[1];
+            initialized[3] = true;
+            }
+          else
+            {
+            if (x2[0] > bounds[0]) // min
+              {
+              x2[0] = bounds[0];
+              }
+            if (x2[1] < bounds[1]) // max
+              {
+              x2[1] = bounds[1];
+              }
+            }
+          }
         }
       else
         {
-        if (y1[0] > bounds[2]) // min
+        // Initialize the appropriate ranges, or push out the ranges
+        if (!initialized[0])
           {
           y1[0] = bounds[2];
-          }
-        if (y1[1] < bounds[3]) // max
-          {
           y1[1] = bounds[3];
+          initialized[0] = true;
           }
-        }
-      }
-    if ((corner == 0 || corner == 1)) // bottom
-      {
-      if (!initialized[1])
-        {
-        x1[0] = bounds[0];
-        x1[1] = bounds[1];
-        initialized[1] = true;
-        }
-      else
-        {
-        if (x1[0] > bounds[0]) // min
+        else
           {
-          x1[0] = bounds[0];
-          }
-        if (x1[1] < bounds[1]) // max
-          {
-          x1[1] = bounds[1];
-          }
-        }
-      }
-    if ((corner == 1 || corner == 2)) // right
-      {
-      if (!initialized[2])
-        {
-        y2[0] = bounds[2];
-        y2[1] = bounds[3];
-        initialized[2] = true;
-        }
-      else
-        {
-        if (y2[0] > bounds[2]) // min
-          {
-          y2[0] = bounds[2];
-          }
-        if (y2[1] < bounds[3]) // max
-          {
-          y2[1] = bounds[3];
+          if (y1[0] > bounds[2]) // min
+            {
+            y1[0] = bounds[2];
+            }
+          if (y1[1] < bounds[3]) // max
+            {
+            y1[1] = bounds[3];
+            }
           }
         }
-      }
-    if ((corner == 2 || corner == 3)) // top
-    {
-      if (!initialized[3])
-        {
-        x2[0] = bounds[0];
-        x2[1] = bounds[1];
-        initialized[3] = true;
-        }
-      else
-        {
-        if (x2[0] > bounds[0]) // min
-          {
-          x2[0] = bounds[0];
-          }
-        if (x2[1] < bounds[1]) // max
-          {
-          x2[1] = bounds[1];
-          }
-        }
-      }
     }
 
   // Now set the newly calculated bounds on the axes
   for (int i = 0; i < 4; ++i)
   {
-    vtkAxis* axis = q->chart()->GetAxis(i);
+    vtkAxis* axis = q->abstractChart()->GetAxis(i);
     double* range = nullptr;
     switch (i)
       {
@@ -623,7 +658,7 @@ void qMRMLPlotViewPrivate::emitSelection()
 {
   Q_Q(qMRMLPlotView);
 
-  if (!q->chart())
+  if (!q->abstractChart())
     {
     return;
     }
@@ -640,9 +675,9 @@ void qMRMLPlotViewPrivate::emitSelection()
   vtkNew<vtkStringArray> mrmlPlotSeriesIDs;
   vtkNew<vtkCollection> selectionCol;
 
-  for (int plotIndex = 0; plotIndex < q->chart()->GetNumberOfPlots(); plotIndex++)
+  for (int plotIndex = 0; plotIndex < q->abstractChart()->GetNumberOfPlots(); plotIndex++)
     {
-    vtkPlot *plot = q->chart()->GetPlot(plotIndex);
+    vtkPlot *plot = q->abstractChart()->GetPlot(plotIndex);
     if (!plot)
       {
       continue;
@@ -679,7 +714,7 @@ void qMRMLPlotViewPrivate::updateWidgetFromMRML()
   Q_Q(qMRMLPlotView);
 
   if (!this->MRMLScene || !this->MRMLPlotViewNode
-    || !q->isEnabled() || !q->chart() || !q->chart()->GetLegend())
+    || !q->isEnabled() || !q->abstractChart() || !q->abstractChart()->GetLegend())
     {
     return;
     }
@@ -695,28 +730,28 @@ void qMRMLPlotViewPrivate::updateWidgetFromMRML()
   switch (interactionMode)
   {
   case vtkMRMLPlotViewNode::InteractionModePanView:
-    q->chart()->SetClickActionToButton(vtkChart::SELECT, vtkContextMouseEvent::LEFT_BUTTON);
-    q->chart()->SetActionToButton(vtkChart::PAN, vtkContextMouseEvent::LEFT_BUTTON);
-    q->chart()->SetActionToButton(vtkChart::ZOOM, vtkContextMouseEvent::MIDDLE_BUTTON);
-    q->chart()->SetActionToButton(vtkChart::ZOOM_AXIS, vtkContextMouseEvent::RIGHT_BUTTON);
+    q->abstractChart()->SetClickActionToButton(vtkChart::SELECT, vtkContextMouseEvent::LEFT_BUTTON);
+    q->abstractChart()->SetActionToButton(vtkChart::PAN, vtkContextMouseEvent::LEFT_BUTTON);
+    q->abstractChart()->SetActionToButton(vtkChart::ZOOM, vtkContextMouseEvent::MIDDLE_BUTTON);
+    q->abstractChart()->SetActionToButton(vtkChart::ZOOM_AXIS, vtkContextMouseEvent::RIGHT_BUTTON);
     break;
   case vtkMRMLPlotViewNode::InteractionModeSelectPoints:
-    q->chart()->SetClickActionToButton(vtkChart::SELECT, vtkContextMouseEvent::LEFT_BUTTON);
-    q->chart()->SetActionToButton(vtkChart::SELECT, vtkContextMouseEvent::LEFT_BUTTON);
-    q->chart()->SetActionToButton(vtkChart::PAN, vtkContextMouseEvent::MIDDLE_BUTTON);
-    q->chart()->SetActionToButton(vtkChart::ZOOM_AXIS, vtkContextMouseEvent::RIGHT_BUTTON);
+    q->abstractChart()->SetClickActionToButton(vtkChart::SELECT, vtkContextMouseEvent::LEFT_BUTTON);
+    q->abstractChart()->SetActionToButton(vtkChart::SELECT, vtkContextMouseEvent::LEFT_BUTTON);
+    q->abstractChart()->SetActionToButton(vtkChart::PAN, vtkContextMouseEvent::MIDDLE_BUTTON);
+    q->abstractChart()->SetActionToButton(vtkChart::ZOOM_AXIS, vtkContextMouseEvent::RIGHT_BUTTON);
     break;
   case vtkMRMLPlotViewNode::InteractionModeFreehandSelectPoints:
-    q->chart()->SetClickActionToButton(vtkChart::SELECT, vtkContextMouseEvent::LEFT_BUTTON);
-    q->chart()->SetActionToButton(vtkChart::SELECT_POLYGON, vtkContextMouseEvent::LEFT_BUTTON);
-    q->chart()->SetActionToButton(vtkChart::PAN, vtkContextMouseEvent::MIDDLE_BUTTON);
-    q->chart()->SetActionToButton(vtkChart::ZOOM_AXIS, vtkContextMouseEvent::RIGHT_BUTTON);
+    q->abstractChart()->SetClickActionToButton(vtkChart::SELECT, vtkContextMouseEvent::LEFT_BUTTON);
+    q->abstractChart()->SetActionToButton(vtkChart::SELECT_POLYGON, vtkContextMouseEvent::LEFT_BUTTON);
+    q->abstractChart()->SetActionToButton(vtkChart::PAN, vtkContextMouseEvent::MIDDLE_BUTTON);
+    q->abstractChart()->SetActionToButton(vtkChart::ZOOM_AXIS, vtkContextMouseEvent::RIGHT_BUTTON);
     break;
   case vtkMRMLPlotViewNode::InteractionModeMovePoints:
-    q->chart()->SetClickActionToButton(vtkChart::SELECT, vtkContextMouseEvent::NO_BUTTON);
-    q->chart()->SetActionToButton(vtkChart::CLICK_AND_DRAG, vtkContextMouseEvent::LEFT_BUTTON);
-    q->chart()->SetActionToButton(vtkChart::PAN, vtkContextMouseEvent::MIDDLE_BUTTON);
-    q->chart()->SetActionToButton(vtkChart::ZOOM_AXIS, vtkContextMouseEvent::RIGHT_BUTTON);
+    q->abstractChart()->SetClickActionToButton(vtkChart::SELECT, vtkContextMouseEvent::NO_BUTTON);
+    q->abstractChart()->SetActionToButton(vtkChart::CLICK_AND_DRAG, vtkContextMouseEvent::LEFT_BUTTON);
+    q->abstractChart()->SetActionToButton(vtkChart::PAN, vtkContextMouseEvent::MIDDLE_BUTTON);
+    q->abstractChart()->SetActionToButton(vtkChart::ZOOM_AXIS, vtkContextMouseEvent::RIGHT_BUTTON);
     break;
   }
 
@@ -726,18 +761,18 @@ void qMRMLPlotViewPrivate::updateWidgetFromMRML()
   if (!plotChartNode)
     {
     // Clean all the plots in vtkChartXY
-    while(q->chart()->GetNumberOfPlots() > 0)
+    while(q->abstractChart()->GetNumberOfPlots() > 0)
       {
       // This if is necessary for a BUG at VTK level:
       // in the case of a plot removed with corner ID 0,
       // when successively the addPlot method is called
       // (to add the same plot instance to vtkChartXY) it will
       // fail to setup the graph in the vtkChartXY render.
-      if (q->chart()->GetPlotCorner(q->chart()->GetPlot(0)) == 0)
+      if (q->xyChart() && q->xyChart()->GetPlotCorner(q->xyChart()->GetPlot(0)) == 0)
         {
-        q->chart()->SetPlotCorner(q->chart()->GetPlot(0), 1);
+        q->xyChart()->SetPlotCorner(q->xyChart()->GetPlot(0), 1);
         }
-      q->removePlot(q->chart()->GetPlot(0));
+      q->removePlot(q->abstractChart()->GetPlot(0));
       }
     this->MapPlotToPlotSeriesNodeID.clear();
     this->UpdatingWidgetFromMRML = false;
@@ -746,10 +781,13 @@ void qMRMLPlotViewPrivate::updateWidgetFromMRML()
 
   // Enable moving of data points by drag-and-drop if point moving is enabled
   // both in the plot chart and view nodes.
-  q->chart()->SetDragPointAlongX(this->MRMLPlotViewNode->GetEnablePointMoveAlongX()
-    && plotChartNode->GetEnablePointMoveAlongX());
-  q->chart()->SetDragPointAlongY(this->MRMLPlotViewNode->GetEnablePointMoveAlongY()
-    && plotChartNode->GetEnablePointMoveAlongY());
+  if (q->xyChart())
+    {
+    q->xyChart()->SetDragPointAlongX(this->MRMLPlotViewNode->GetEnablePointMoveAlongX()
+      && plotChartNode->GetEnablePointMoveAlongX());
+    q->xyChart()->SetDragPointAlongY(this->MRMLPlotViewNode->GetEnablePointMoveAlongY()
+      && plotChartNode->GetEnablePointMoveAlongY());
+    }
 
   vtkSmartPointer<vtkCollection> allPlotSeriesNodesInScene = vtkSmartPointer<vtkCollection>::Take
     (this->mrmlScene()->GetNodesByClass("vtkMRMLPlotSeriesNode"));
@@ -763,9 +801,9 @@ void qMRMLPlotViewPrivate::updateWidgetFromMRML()
   std::set< vtkMRMLPlotSeriesNode* > plotSeriesNodesNotToAdd;
 
   // Remove plots from chart that are no longer needed or available
-  for (int chartPlotSeriesNodesIndex = q->chart()->GetNumberOfPlots()-1; chartPlotSeriesNodesIndex >= 0; chartPlotSeriesNodesIndex--)
+  for (int chartPlotSeriesNodesIndex = q->abstractChart()->GetNumberOfPlots()-1; chartPlotSeriesNodesIndex >= 0; chartPlotSeriesNodesIndex--)
     {
-    vtkPlot *plot = q->chart()->GetPlot(chartPlotSeriesNodesIndex);
+    vtkPlot *plot = q->abstractChart()->GetPlot(chartPlotSeriesNodesIndex);
     if (!plot)
       {
       continue;
@@ -807,9 +845,9 @@ void qMRMLPlotViewPrivate::updateWidgetFromMRML()
       // when successively the addPlot method is called
       // (to add the same plot instance to vtkChartXY) it will
       // fail to setup the graph in the vtkChartXY render.
-      if (q->chart()->GetPlotCorner(plot) == 0)
+      if (q->xyChart() && q->xyChart()->GetPlotCorner(plot) == 0)
         {
-        q->chart()->SetPlotCorner(plot, 1);
+        q->xyChart()->SetPlotCorner(plot, 1);
         }
 
       q->removePlot(plot);
@@ -835,24 +873,24 @@ void qMRMLPlotViewPrivate::updateWidgetFromMRML()
     q->addPlot(newPlot);
     }
 
-  int fontTypeIndex = q->chart()->GetTitleProperties()->GetFontFamilyFromString(plotChartNode->GetFontType() ? plotChartNode->GetFontType() : "Arial");
+  int fontTypeIndex = q->abstractChart()->GetTitleProperties()->GetFontFamilyFromString(plotChartNode->GetFontType() ? plotChartNode->GetFontType() : "Arial");
 
   // Setting Title
   if (plotChartNode->GetTitleVisibility())
     {
-    q->chart()->SetTitle(plotChartNode->GetTitle() ? plotChartNode->GetTitle() : "");
+    q->abstractChart()->SetTitle(plotChartNode->GetTitle() ? plotChartNode->GetTitle() : "");
     }
   else
     {
-    q->chart()->SetTitle("");
+    q->abstractChart()->SetTitle("");
     }
-  q->chart()->GetTitleProperties()->SetFontFamily(fontTypeIndex);
-  q->chart()->GetTitleProperties()->SetFontSize(plotChartNode->GetTitleFontSize());
+  q->abstractChart()->GetTitleProperties()->SetFontFamily(fontTypeIndex);
+  q->abstractChart()->GetTitleProperties()->SetFontSize(plotChartNode->GetTitleFontSize());
 
   // Setting Legend
-  q->chart()->SetShowLegend(plotChartNode->GetLegendVisibility());
-  q->chart()->GetLegend()->GetLabelProperties()->SetFontSize(plotChartNode->GetLegendFontSize());
-  q->chart()->GetLegend()->GetLabelProperties()->SetFontFamily(fontTypeIndex);
+  q->abstractChart()->SetShowLegend(plotChartNode->GetLegendVisibility());
+  q->abstractChart()->GetLegend()->GetLabelProperties()->SetFontSize(plotChartNode->GetLegendFontSize());
+  q->abstractChart()->GetLegend()->GetLabelProperties()->SetFontFamily(fontTypeIndex);
 
   // Setting Axes
   const unsigned int numberOfAxisIDs = 4;
@@ -860,7 +898,7 @@ void qMRMLPlotViewPrivate::updateWidgetFromMRML()
   for (unsigned int axisIndex = 0; axisIndex < numberOfAxisIDs; ++axisIndex)
     {
     int axisID = axisIDs[axisIndex];
-    vtkAxis *axis = q->chart()->GetAxis(axisID);
+    vtkAxis *axis = q->abstractChart()->GetAxis(axisID);
     if (!axis)
       {
       continue;
@@ -1076,11 +1114,11 @@ void qMRMLPlotView::fitToContent()
 // --------------------------------------------------------------------------
 void qMRMLPlotView::RemovePlotSelections()
 {
-  if (!this->chart())
+  if (!this->xyChart())
     {
     return;
     }
-  this->chart()->RemovePlotSelections();
+  this->xyChart()->RemovePlotSelections();
 }
 
 // --------------------------------------------------------------------------
@@ -1097,14 +1135,14 @@ void qMRMLPlotView::updateMRMLChartAxisRangeFromWidget()
     }
   int wasModified = d->MRMLPlotChartNode->StartModify();
   // Setting Axes
-  vtkAxis *bottomAxis = this->chart()->GetAxis(vtkAxis::BOTTOM);
+  vtkAxis *bottomAxis = this->abstractChart()->GetAxis(vtkAxis::BOTTOM);
   if (bottomAxis)
     {
     double range[2] = { 0, 1 };
     bottomAxis->GetUnscaledRange(range);
     d->MRMLPlotChartNode->SetXAxisRange(range);
     }
-  vtkAxis *leftAxis = this->chart()->GetAxis(vtkAxis::LEFT);
+  vtkAxis *leftAxis = this->abstractChart()->GetAxis(vtkAxis::LEFT);
   if (leftAxis)
     {
     double range[2] = { 0, 1 };
